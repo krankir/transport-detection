@@ -1,0 +1,115 @@
+version: '3.9'
+
+services:
+
+  db:
+    image: postgres:15
+    container_name: db
+    volumes:
+      - .:/docker-entrypoint-initdb.d
+    restart: always
+    ports:
+      - 5432:5432
+    networks:
+      - network1
+    env_file:
+      - .env
+
+  rabbitmq:
+    image: katanaml/rabbitmq-service
+    build:
+      context: ./rabbitmq
+      dockerfile: Dockerfile
+    container_name: rabbitmq-service
+    ports:
+      - 5672:5672
+      - 15672:15672
+    volumes:
+      - ./backend-rabbitmq/etc/:/etc/backend/
+      - ./backend-rabbitmq/data/:/var/lib/backend/
+      - ./backend-rabbitmq/logs/:/var/log/backend/
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=welcome1
+      - RABBITMQ_USER=skipper
+      - RABBITMQ_PASSWORD=welcome1
+    networks:
+      - network1
+    depends_on:
+      - db
+    restart: always
+
+  api:
+    image: isml/is-api
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: skipper-api
+    command: bash -c "alembic upgrade head && uvicorn endpoint:app --port=8000 --host 0.0.0.0"
+    ports:
+      - 8000:8000
+    environment:
+      - RABBITMQ_BROKER=pyamqp://skipper:welcome1@rabbitmq//
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=skipper
+      - RABBITMQ_PASSWORD=welcome1
+    networks:
+      - network1
+    depends_on:
+      - db
+      - rabbitmq
+    restart: on-failure
+
+  api-celery:
+    image: isml/is-api-celery
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: skipper-api-celery
+    command: celery -A api.worker worker --loglevel=INFO
+    environment:
+      - RABBITMQ_BROKER=pyamqp://skipper:welcome1@rabbitmq//
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=skipper
+      - RABBITMQ_PASSWORD=welcome1
+    networks:
+      - network1
+    depends_on:
+      - db
+      - rabbitmq
+      - api
+    restart: on-failure
+
+
+#  trainingservice:
+#    build:
+#      context: ./services/trainingservice
+#    container_name: trainingservice
+#    restart: always
+#    networks:
+#      - network1
+#    depends_on:
+#      - db
+#      - rabbitmq
+#      - api
+#      - api-celery
+#
+#  dataservice:
+#    build:
+#      context: ./services/dataservice
+#    container_name: dataservice
+#    restart: always
+#    networks:
+#      - network1
+#    depends_on:
+#      - db
+#      - rabbitmq
+#      - api
+#      - api-celery
+#      - trainingservice
+
+networks:
+  network1:
+    name: is-network
